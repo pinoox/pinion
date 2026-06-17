@@ -1,0 +1,9 @@
+export const PROTOCOL = 'pinion';
+export const PROTOCOL_VERSION = 2;
+export const DEFAULT_BASE_URL = '/api/pinion';
+export const DEFAULT_STORAGE_KEY = 'pinion_sessions';
+export const DEFAULT_PARALLEL = 2;
+export const DEFAULT_CHUNK_THRESHOLD = 8 * 1024 * 1024;
+export const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
+export const DEFAULT_RETRY = 2;
+export const DEFAULT_RETRY_DELAY_MS = 800;

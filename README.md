@@ -9,14 +9,21 @@ Protocol id: `pinion` · version: `2` · PHP 8.1+
 
 ```
 packages/pinion/
-├── client/
-│   ├── pinion-axios.js   # Browser client (Axios)
-│   └── package.json
+├── client/                 # @pinoox/pinion-client (npm)
+│   ├── src/
+│   ├── types/
+│   ├── package.json
+│   └── README.md           # npm publish guide
 ├── config/pinion.php
-├── src/                  # PHP protocol engine
+├── src/                    # PHP protocol engine (Packagist)
 ├── tests/
 └── README.md
 ```
+
+| Registry | Package |
+|----------|---------|
+| Packagist | `pinoox/pinion` |
+| npm | `@pinoox/pinion-client` |
 
 ## Table of contents
 
@@ -30,6 +37,7 @@ packages/pinion/
 - [Usage — Pinoox](#usage--pinoox)
 - [Usage — Laravel](#usage--laravel)
 - [JavaScript & Axios client](#javascript--axios-client)
+- [npm client docs & publish guide](./client/README.md)
 - [License](#license)
 
 ---
@@ -125,14 +133,18 @@ composer require pinoox/pinion
 | `Result` | `success`, `session`, `path`, `error`, `resumed` |
 | `PathResolverInterface` | Map logical destination → absolute directory |
 
-**JavaScript client** (`client/pinion-axios.js`):
+**JavaScript client** (`@pinoox/pinion-client` on npm):
 
 | Export | Role |
 |--------|------|
-| `createPinionClient(axios, options)` | Full upload helper (resume, progress, parallel) |
-| `buildFingerprint(file)` | Stable client-side session key |
-| `shouldUsePinion(file, threshold?)` | Skip Pinion for small files |
-| `client.upload(file, opts)` | `init → upload parts → complete` |
+| `createPinionClient(axios, options)` | Full client — resume, retry, progress, cancel |
+| `createPinionAxios(axios, options)` | Axios instance + client in one call |
+| `buildFingerprint(file)` / `shouldUsePinion(file)` | Resume key & threshold helper |
+| `PinionError` | Typed errors with `code` |
+| `sha256Hex(blob)` | Per-part checksum helper |
+| `client.upload(file, opts)` | `init → parts → complete` with parallel + retry |
+| `client.resume(file, opts)` | Same as upload (explicit resume) |
+| `client.cancel()` | Abort active upload |
 | `client.api` | Low-level `init`, `uploadPart`, `complete`, `status`, `abort` |
 
 **Laravel extras** (auto-discovery):
@@ -505,180 +517,66 @@ $result = Pinion::begin()
 
 ## JavaScript & Axios client
 
-Pinion ships a browser helper at `client/pinion-axios.js`. It works with **Axios 1.x** and unwraps common API envelopes (`{ data: … }` from Pinoox / Laravel).
+Browser client is published on npm as **`@pinoox/pinion-client`**.
 
-### Install (frontend)
+Full API reference and **step-by-step npm publish guide** (Persian): **[client/README.md](./client/README.md)**
+
+### Install
 
 ```bash
-npm install axios
+npm install @pinoox/pinion-client axios
 ```
 
-Copy or import the client from the package:
+### Quick upload
 
 ```javascript
 import axios from 'axios';
-import { createPinionClient } from './vendor/pinoox/pinion/client/pinion-axios.js';
-// or: import { createPinionClient } from '@pinoox/pinion-client';
-```
+import { createPinionAxios } from '@pinoox/pinion-client';
 
-### Quick upload (Axios)
-
-```javascript
-import axios from 'axios';
-import { createPinionClient } from 'pinoox/pinion/client/pinion-axios.js';
-
-const api = axios.create({
-    baseURL: '/api',
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-});
-
-const pinion = createPinionClient(api, { baseURL: '/api/pinion' });
-
-const input = document.querySelector('#file');
-input.addEventListener('change', async () => {
-    const file = input.files[0];
-    if (!pinion.shouldUsePinion(file)) return;
-
-    const result = await pinion.upload(file, {
-        parallel: 2,
-        onProgress: (percent) => console.log(percent + '%'),
-    });
-
-    console.log('done', result);
-});
-```
-
-### Vue / React pattern
-
-```javascript
-import { ref } from 'vue';
-import axios from 'axios';
-import { createPinionClient, shouldUsePinion } from 'pinoox/pinion/client/pinion-axios.js';
-
-const progress = ref(0);
-const controller = new AbortController();
-
-const pinion = createPinionClient(axios, {
-    baseURL: '/app/pinion',
-    // Pinoox ApiResponse: { data: { … } }
+const { client } = createPinionAxios(axios, {
+    baseURL: '/api/pinion',
+    headers: { Authorization: 'Bearer …' },
     unwrap: (res) => res.data?.data ?? res.data,
 });
 
-async function onFileSelected(file) {
-    if (!shouldUsePinion(file)) {
-        // fall back to normal single POST upload
-        return;
-    }
-
-    progress.value = 0;
-    await pinion.upload(file, {
-        parallel: 2,
-        signal: controller.signal,
-        onProgress: (p) => { progress.value = p; },
-    });
-}
-
-function cancel() {
-    controller.abort();
-}
-```
-
-### Low-level Axios API
-
-Use `client.api` when you control each step yourself:
-
-```javascript
-const pinion = createPinionClient(axios, { baseURL: '/api/pinion' });
-
-// JSON body
-const session = await pinion.api.init({
-    filename: 'course-video.mp4',
-    size: file.size,
-    fingerprint: pinion.buildFingerprint(file),
-});
-
-// multipart — do NOT set Content-Type; Axios adds the boundary
-const form = new FormData();
-form.append('upload_id', session.id);
-form.append('index', '0');
-form.append('chunk_hash', await sha256Hex(blob));
-form.append('chunk', blob, 'course-video.mp4.part');
-
-await pinion.api.uploadPart(form);
-
-await pinion.api.complete(session.id);
-await pinion.api.status(session.id);
-await pinion.api.abort(session.id);
-```
-
-### Axios rules for Pinion
-
-| Request | Content-Type | Body |
-|---------|--------------|------|
-| `init`, `complete`, `abort` | `application/json` | plain object |
-| `upload` | *(auto)* | `FormData` with `chunk` field |
-
-**Do not** set `Content-Type: multipart/form-data` manually on upload — Axios must set the boundary.
-
-**Do** pass `signal` from `AbortController` to cancel in-flight parts:
-
-```javascript
-const controller = new AbortController();
-pinion.upload(file, { signal: controller.signal });
-// later: controller.abort();
-```
-
-### Custom response unwrap
-
-If your API returns a different envelope:
-
-```javascript
-const pinion = createPinionClient(axios, {
-    baseURL: '/api/pinion',
-    unwrap: (response) => response.data.result,
+await client.upload(file, {
+    parallel: 2,
+    retry: 2,
+    onProgress: ({ percent, bytesUploaded, bytesTotal }) => {
+        console.log(`${percent}% — ${bytesUploaded}/${bytesTotal}`);
+    },
+    onError: (err, index) => console.warn(err.code, index),
 });
 ```
 
-### Fetch (without Axios)
+### Features
+
+- Resume via `fingerprint` + `localStorage`
+- Parallel parts (default `2`)
+- Auto-retry per part (default `2`)
+- `onProgress` with bytes + percent
+- `cancel()` / `AbortSignal`
+- TypeScript types (`types/index.d.ts`)
+- Custom `unwrap` for your API envelope
+
+### Composer vendor path (without npm)
 
 ```javascript
-async function sha256Hex(blob) {
-    const buffer = await blob.arrayBuffer();
-    const hash = await crypto.subtle.digest('SHA-256', buffer);
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function uploadLargeFile(file, baseUrl = '/api/pinion') {
-    const fingerprint = [file.name, file.size, file.lastModified, file.type].join(':');
-
-    const init = await fetch(`${baseUrl}/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, size: file.size, fingerprint }),
-    }).then(r => r.json());
-
-    const session = init.session ?? init.data ?? init;
-    const chunkSize = session.chunk_size;
-    const indexes = session.missing_indexes ?? Array.from({ length: session.total_chunks }, (_, i) => i);
-
-    for (const index of indexes) {
-        const start = index * chunkSize;
-        const blob = file.slice(start, start + chunkSize);
-        const form = new FormData();
-        form.append('upload_id', session.id);
-        form.append('index', String(index));
-        form.append('chunk_hash', await sha256Hex(blob));
-        form.append('chunk', blob, `${file.name}.part`);
-        await fetch(`${baseUrl}/upload`, { method: 'POST', body: form });
-    }
-
-    return fetch(`${baseUrl}/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upload_id: session.id }),
-    }).then(r => r.json());
-}
+import { createPinionClient } from './vendor/pinoox/pinion/client/src/index.js';
 ```
+
+Legacy path: `client/pinion-axios.js` (re-exports main module).
+
+### Publish to npm (summary)
+
+```bash
+cd packages/pinion/client
+npm login
+npm version 1.0.0
+npm publish --access public
+```
+
+Details: [client/README.md § Publish to npm](./client/README.md#publish-to-npm)
 
 ---
 

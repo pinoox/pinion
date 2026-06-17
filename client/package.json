@@ -1,15 +1,64 @@
 {
-  "name": "@pinoox/pinion-client",
-  "version": "1.0.0",
-  "description": "Axios client for the Pinion resumable upload protocol",
+  "name": "@pinooxhq/pinion-client",
+  "version": "1.1.0",
+  "description": "Axios client for Pinion — resumable uploads with retry, resume, progress ETA, and unwrap presets",
   "type": "module",
-  "main": "pinion-axios.js",
+  "license": "MIT",
+  "author": "Pinoox <dev@pinoox.com>",
+  "homepage": "https://github.com/pinoox/pinion#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pinoox/pinion.git",
+    "directory": "client"
+  },
+  "bugs": {
+    "url": "https://github.com/pinoox/pinion/issues"
+  },
+  "keywords": [
+    "pinoox",
+    "pinion",
+    "upload",
+    "axios",
+    "resumable",
+    "chunked-upload",
+    "multipart",
+    "browser",
+    "vue",
+    "react",
+    "fluent-api",
+    "typescript"
+  ],
+  "files": [
+    "src",
+    "types",
+    "pinion-axios.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
   "exports": {
-    ".": "./pinion-axios.js"
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./legacy": {
+      "import": "./pinion-axios.js",
+      "default": "./pinion-axios.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
   },
   "peerDependencies": {
-    "axios": ">=1.0.0"
+    "axios": ">=1.6.0"
   },
-  "keywords": ["pinoox", "pinion", "upload", "axios", "resumable"],
-  "license": "MIT"
+  "peerDependenciesMeta": {
+    "axios": {
+      "optional": false
+    }
+  }
 }
