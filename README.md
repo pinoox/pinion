@@ -1,48 +1,14 @@
 # Pinion — Resumable Upload Protocol for PHP
 
-**Pinion** (`pinoox/pinion`) uploads large files in small parts on hosts with low `upload_max_filesize` / `post_max_size`.  
+**Pinion** (`pinoox/pinion`) uploads large files in small parts on hosts with low `upload_max_filesize` / `post_max_size`.
+
 Protocol id: `pinion` · version: `2` · PHP 8.1+
 
 ---
 
-## Structure
-
-```
-packages/pinion/
-├── client/                 # @pinoox/pinion-client (npm)
-│   ├── src/
-│   ├── types/
-│   ├── package.json
-│   └── README.md           # npm publish guide
-├── config/pinion.php
-├── src/                    # PHP protocol engine (Packagist)
-├── tests/
-└── README.md
-```
-
-| Registry | Package |
-|----------|---------|
-| Packagist | `pinoox/pinion` |
-| npm | `@pinoox/pinion-client` |
-
-## Table of contents
-
-- [Quick start](#quick-start)
-- [Use cases](#use-cases)
-- [Install](#install)
-- [Entry points & API surface](#entry-points--api-surface)
-- [Configuration](#configuration)
-- [HTTP protocol](#http-protocol)
-- [Usage — Plain PHP](#usage--plain-php)
-- [Usage — Pinoox](#usage--pinoox)
-- [Usage — Laravel](#usage--laravel)
-- [JavaScript & Axios client](#javascript--axios-client)
-- [npm client docs & publish guide](./client/README.md)
-- [License](#license)
-
----
-
 ## Quick start
+
+### Server (PHP)
 
 ```bash
 composer require pinoox/pinion
@@ -53,41 +19,61 @@ use Pinoox\Pinion\Pinion;
 
 Pinion::configure(['storage_path' => '/tmp/pinion']);
 
-$result = Pinion::begin()
-    ->filename('course-video.mp4')
-    ->size(524288000)
-    ->to('uploads/videos')
-    ->init();
-
-$uploadId = $result->session->id;
-
-Pinion::manager()->receive($uploadId, 0, $chunkBinary, $chunkHash);
-$done = Pinion::manager()->complete($uploadId);
-
-echo $done->path; // final file path
-```
-
-Wire HTTP in three lines:
-
-```php
 $handler = Pinion::http(['destination' => 'uploads/videos']);
-$response = $handler->init($_POST);           // POST /init
-$response = $handler->upload($_POST, $file);  // POST /upload
-$response = $handler->complete($_POST);       // POST /complete
+
+$handler->init($_POST);           // POST /init
+$handler->upload($_POST, $file);  // POST /upload
+$handler->complete($_POST);       // POST /complete
 ```
 
-That is the whole idea: **init → upload parts → complete**.
+Three steps: **init → upload parts → complete**.
+
+### Browser (JavaScript)
+
+```bash
+npm install @pinooxhq/pinion-client
+```
+
+```javascript
+import { uploadFile } from '@pinooxhq/pinion-client';
+
+await uploadFile(file, {
+  baseURL: '/api/pinion',
+  unwrapPreset: 'pinoox',
+  onProgress: ({ percent }) => console.log(percent + '%'),
+});
+```
+
+No Axios required — uses native `fetch`. Full client docs: **[client/README.md](./client/README.md)**
 
 ---
 
-## Use cases
+## Table of contents
+
+- [Quick start](#quick-start)
+- [What is Pinion](#what-is-pinion)
+- [Install](#install)
+- [Browser client](#browser-client)
+- [Server usage](#server-usage)
+  - [Plain PHP](#plain-php)
+  - [Pinoox](#pinoox)
+  - [Laravel](#laravel)
+- [HTTP protocol](#http-protocol)
+- [Configuration](#configuration)
+- [API surface](#api-surface)
+- [Package structure](#package-structure)
+- [License](#license)
+
+---
+
+## What is Pinion
 
 | Scenario | Why Pinion |
 |----------|------------|
 | Shared hosting (20 MB upload cap) | Send 5 MB parts instead of one huge POST |
 | Slow or mobile networks | Resume after disconnect via `fingerprint` |
 | Video / archive uploads | Hundreds of MB or GB without raising `php.ini` limits |
-| Admin panels & CMS | Background progress bar with parallel parts |
+| Admin panels & CMS | Progress bar with parallel parts |
 | API file intake | Stable contract (`pinion` v2) across PHP stacks |
 | Integrity-sensitive files | SHA-256 per part (`chunk_hash`) and optional whole-file hash |
 
@@ -96,6 +82,8 @@ Pinion does **not** replace object storage (S3, MinIO). It solves the **PHP requ
 ---
 
 ## Install
+
+### PHP (Packagist)
 
 ```bash
 composer require pinoox/pinion
@@ -110,175 +98,79 @@ composer require pinoox/pinion
 }
 ```
 
----
+### JavaScript (npm)
 
-## Entry points & API surface
-
-| Class / method | Role |
-|----------------|------|
-| `Pinion::configure($config, $pathResolver?)` | Boot once — config + optional path resolver |
-| `Pinion::manager()` | Low-level `Manager` instance |
-| `Pinion::begin()` | Fluent `Builder` for `init()` |
-| `Pinion::http($defaults)` | Framework-agnostic HTTP adapter (returns arrays) |
-| `Manager::init(...)` | Create or resume session |
-| `Manager::receive(...)` | Store one part |
-| `Manager::complete(...)` | Assemble final file |
-| `Manager::status(...)` | Progress + `missing_indexes` |
-| `Manager::abort(...)` | Cancel session |
-| `Manager::list(...)` | List sessions by status |
-| `Manager::cleanExpired()` | Purge expired pending sessions |
-| `HttpHandler` | Maps HTTP input → Manager → `{ success, data?, error? }` |
-| `Builder` | `filename()`, `size()`, `to()`, `extensions()`, `fingerprint()`, `chunkSize()`, `init()` |
-| `Session` | Read-only upload state + `missingIndexes()`, `progress()` |
-| `Result` | `success`, `session`, `path`, `error`, `resumed` |
-| `PathResolverInterface` | Map logical destination → absolute directory |
-
-**JavaScript client** (`@pinoox/pinion-client` on npm):
-
-| Export | Role |
-|--------|------|
-| `createPinionClient(axios, options)` | Full client — resume, retry, progress, cancel |
-| `createPinionAxios(axios, options)` | Axios instance + client in one call |
-| `buildFingerprint(file)` / `shouldUsePinion(file)` | Resume key & threshold helper |
-| `PinionError` | Typed errors with `code` |
-| `sha256Hex(blob)` | Per-part checksum helper |
-| `client.upload(file, opts)` | `init → parts → complete` with parallel + retry |
-| `client.resume(file, opts)` | Same as upload (explicit resume) |
-| `client.cancel()` | Abort active upload |
-| `client.api` | Low-level `init`, `uploadPart`, `complete`, `status`, `abort` |
-
-**Laravel extras** (auto-discovery):
-
-| Piece | Role |
-|-------|------|
-| `PinionServiceProvider` | Registers `Manager` + `HttpHandler` singletons |
-| `Pinion` facade | `Pinion::begin()`, `Pinion::http()` |
-
-**Pinoox extras** (in `pincore`, not this package):
-
-| Piece | Role |
-|-------|------|
-| `Pinoox\Portal\Pinion` | Static portal over `Manager` |
-| `Pinoox\Component\Pinion\HttpHandler` | Wraps package handler → `JsonResponse` |
-| CLI | `php pinoox pinion:list`, `pinion:info`, `pinion:clean` |
-
----
-
-## Configuration
-
-Pass an array to `Pinion::configure()` or copy `config/pinion.php`.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `protocol` | `pinion` | Protocol identifier (read-only in responses) |
-| `protocol_version` | `2` | Protocol version |
-| `chunk_size` | `5242880` (5 MB) | Part size in bytes |
-| `min_chunk_size` | `1048576` (1 MB) | Lower clamp |
-| `max_chunk_size` | `10485760` (10 MB) | Upper clamp |
-| `ttl` | `86400` | Session lifetime (seconds) |
-| `max_file_size` | `2147483648` (2 GB) | Max declared file size |
-| `storage_path` | `/tmp/pinion` | Temp workspace for in-progress uploads |
-| `storage_strategy` | `parts` | `parts` or `sparse` |
-| `verify_chunks` | `true` | Require matching `chunk_hash` (SHA-256) |
-| `verify_file_hash` | `false` | Require `file_hash` on complete |
-
-**Laravel / `.env` example:**
-
-```env
-PINION_CHUNK_SIZE=5242880
-PINION_TTL=86400
-PINION_MAX_FILE=2147483648
-PINION_PATH=/var/www/storage/pinion-temp
-PINION_STRATEGY=parts
-PINION_VERIFY_CHUNKS=true
-PINION_VERIFY_FILE=false
+```bash
+npm install @pinooxhq/pinion-client
+# optional: npm install axios
 ```
 
-### Storage strategies
+| Registry | Package |
+|----------|---------|
+| Packagist | `pinoox/pinion` |
+| npm | `@pinooxhq/pinion-client` |
 
-| Strategy | On disk | Best for |
-|----------|---------|----------|
-| `parts` | `{id}/parts/0.part`, `1.part`, … | Parallel client uploads |
-| `sparse` | Single `{id}/blob.part` with offset writes | Fewer files, sequential writes |
+---
 
-### Custom destinations
+## Browser client
 
-By default `NativePathResolver` resolves `to('uploads/videos')` relative to a base path you pass at configure time. For multi-root apps implement `PathResolverInterface`:
+Published on npm as **`@pinooxhq/pinion-client`**.  
+Full guide (usage levels, API, publish): **[client/README.md](./client/README.md)**
 
-```php
-final class AppPathResolver implements PathResolverInterface
-{
-    public function resolve(string $reference): string
-    {
-        return match ($reference) {
-            'videos' => '/data/media/videos',
-            'documents' => '/data/media/docs',
-            default => '/data/media/' . ltrim($reference, '/'),
-        };
-    }
-}
+### Ways to use (summary)
+
+| Level | API | When |
+|-------|-----|------|
+| Fastest | `uploadFile(file, options)` | Single button, one-off upload |
+| Fluent | `pinion({ baseURL }).for(file).upload()` | Reusable uploader instance |
+| Full | `createPinionFetch(options)` | Batch, hooks, cancel |
+| Manual | `client.api.init()` / `uploadPart()` / `complete()` | Custom UI or flow |
+| Axios | `pinion(axios, options)` | Need `onUploadProgress` per chunk |
+
+### Fetch (default — zero deps)
+
+```javascript
+import { pinion } from '@pinooxhq/pinion-client';
+
+const uploader = pinion({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
+
+await uploader.for(file).upload({
+  parallel: 2,
+  retry: 2,
+  onProgress: ({ percent, speed, eta }) => console.log(percent, speed, eta),
+});
+```
+
+### Axios (optional)
+
+```javascript
+import axios from 'axios';
+import { createPinionAxios } from '@pinooxhq/pinion-client';
+
+const { client } = createPinionAxios(axios, {
+  baseURL: '/api/pinion',
+  unwrapPreset: 'pinoox',
+});
+
+await client.upload(file, {
+  onProgress: ({ percent }) => console.log(percent),
+  onUploadProgress: (event, index) => console.log('part', index),
+});
+```
+
+### Composer vendor path (without npm)
+
+```javascript
+import { createPinionClient } from './vendor/pinoox/pinion/client/src/index.js';
 ```
 
 ---
 
-## HTTP protocol
+## Server usage
 
-Expose five endpoints in your router. Field names are stable.
+### Plain PHP
 
-| Step | Endpoint | Input |
-|------|----------|-------|
-| Init / resume | `POST /init` | `filename`, `size`, `destination`, optional `fingerprint`, `chunk_size`, `mime`, `file_hash`, `extensions`, `meta` |
-| Upload part | `POST /upload` | `upload_id`, `index`, `chunk` (file), optional `chunk_hash` |
-| Complete | `POST /complete` | `upload_id`, optional `file_hash` |
-| Status | `GET /status/{upload_id}` | — |
-| Abort | `POST /abort/{upload_id}` | — |
-
-**Init response (excerpt):**
-
-```json
-{
-  "id": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
-  "filename": "backup-2026.zip",
-  "size": 524288000,
-  "chunk_size": 5242880,
-  "total_chunks": 100,
-  "missing_indexes": [0, 1, 2],
-  "protocol": "pinion",
-  "protocol_version": 2,
-  "resumable": true
-}
-```
-
-Same `fingerprint` → existing session returned with `resumed: true`.
-
-**Error envelope (`HttpHandler`):**
-
-```json
-{
-  "success": false,
-  "status": 400,
-  "error": {
-    "code": "PINION_INVALID",
-    "message": "invalid_chunk_request",
-    "details": {}
-  }
-}
-```
-
-### Client flow (browser / mobile)
-
-1. Build `fingerprint` from `name:size:lastModified:type`.
-2. `POST /init` → get `upload_id` and `missing_indexes`.
-3. For each index: slice file, SHA-256 → `POST /upload`.
-4. Optional parallel uploads (`parallel=2`).
-5. `POST /complete`.
-6. Keep `upload_id` in `localStorage` until done (resume support).
-
----
-
-## Usage — Plain PHP
-
-Full programmatic flow without a framework.
+Programmatic flow without a framework.
 
 ```php
 use Pinoox\Pinion\Pinion;
@@ -290,33 +182,25 @@ Pinion::configure([
     'verify_chunks' => true,
 ], new NativePathResolver('/var/www'));
 
-// 1. Init
 $result = Pinion::begin()
     ->filename('report-Q1.pdf')
     ->size(48_000_000)
     ->to('uploads/documents')
     ->extensions(['pdf'])
     ->fingerprint($clientFingerprint)
-    ->chunkSize('5MB')
     ->init();
-
-if (!$result->success) {
-    exit($result->error);
-}
 
 $uploadId = $result->session->id;
 
-// 2. Receive parts (repeat per index)
 foreach ($missingIndexes as $index) {
     Pinion::manager()->receive($uploadId, $index, $chunkBinary, $chunkHash);
 }
 
-// 3. Complete
 $complete = Pinion::manager()->complete($uploadId);
 // $complete->path → /var/www/uploads/documents/report-Q1.pdf
 ```
 
-Single-file HTTP endpoint:
+Single-file HTTP router:
 
 ```php
 use Pinoox\Pinion\Pinion;
@@ -343,7 +227,7 @@ header('Content-Type: application/json');
 echo json_encode($response);
 ```
 
-Maintenance helpers:
+Maintenance:
 
 ```php
 $session = Pinion::manager()->status($uploadId);
@@ -352,17 +236,13 @@ $removed = Pinion::manager()->cleanExpired();
 Pinion::manager()->abort($uploadId);
 ```
 
----
+### Pinoox
 
-## Usage — Pinoox
-
-Inside a Pinoox project, use the **Portal** and the core HTTP bridge — do not wire the package manually.
+Use the **Portal** and core HTTP bridge — do not wire the package manually.
 
 ```php
 use Pinoox\Portal\Pinion;
-use Pinoox\Component\Http\Request;
 
-// Programmatic
 $result = Pinion::begin()
     ->filename('backup-2026.zip')
     ->size(524288000)
@@ -391,11 +271,11 @@ class MediaUploadController extends ApiController
         ]);
     }
 
-    public function init(Request $request)    { return $this->pinion()->init($request); }
-    public function upload(Request $request)  { return $this->pinion()->upload($request); }
-    public function complete(Request $request){ return $this->pinion()->complete($request); }
-    public function status(string $uploadId)  { return $this->pinion()->status($uploadId); }
-    public function abort(string $uploadId)   { return $this->pinion()->abort($uploadId); }
+    public function init(Request $request)     { return $this->pinion()->init($request); }
+    public function upload(Request $request)   { return $this->pinion()->upload($request); }
+    public function complete(Request $request) { return $this->pinion()->complete($request); }
+    public function status(string $uploadId)   { return $this->pinion()->status($uploadId); }
+    public function abort(string $uploadId)    { return $this->pinion()->abort($uploadId); }
 }
 ```
 
@@ -411,9 +291,7 @@ php pinoox pinion:clean --abort={upload_id}
 
 More detail: [Pinoox Pinion guide](../docs/en/advanced/pinion.md)
 
----
-
-## Usage — Laravel
+### Laravel
 
 Laravel 10+ via package auto-discovery.
 
@@ -451,7 +329,7 @@ Route::prefix('pinion')->group(function () {
 });
 ```
 
-**3. Controller** (inject `HttpHandler` from the container)
+**3. Controller**
 
 ```php
 namespace App\Http\Controllers;
@@ -515,68 +393,189 @@ $result = Pinion::begin()
 
 ---
 
-## JavaScript & Axios client
+## HTTP protocol
 
-Browser client is published on npm as **`@pinoox/pinion-client`**.
+Expose five endpoints in your router. Field names are stable.
 
-Full API reference and **step-by-step npm publish guide** (Persian): **[client/README.md](./client/README.md)**
+| Step | Endpoint | Input |
+|------|----------|-------|
+| Init / resume | `POST /init` | `filename`, `size`, `destination`, optional `fingerprint`, `chunk_size`, `mime`, `file_hash`, `extensions`, `meta` |
+| Upload part | `POST /upload` | `upload_id`, `index`, `chunk` (file), optional `chunk_hash` |
+| Complete | `POST /complete` | `upload_id`, optional `file_hash` |
+| Status | `GET /status/{upload_id}` | — |
+| Abort | `POST /abort/{upload_id}` | — |
 
-### Install
+**Init response (excerpt):**
 
-```bash
-npm install @pinoox/pinion-client axios
+```json
+{
+  "id": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
+  "filename": "backup-2026.zip",
+  "size": 524288000,
+  "chunk_size": 5242880,
+  "total_chunks": 100,
+  "missing_indexes": [0, 1, 2],
+  "protocol": "pinion",
+  "protocol_version": 2,
+  "resumable": true
+}
 ```
 
-### Quick upload
+Same `fingerprint` → existing session returned with `resumed: true`.
 
-```javascript
-import axios from 'axios';
-import { createPinionAxios } from '@pinoox/pinion-client';
+**Error envelope (`HttpHandler`):**
 
-const { client } = createPinionAxios(axios, {
-    baseURL: '/api/pinion',
-    headers: { Authorization: 'Bearer …' },
-    unwrap: (res) => res.data?.data ?? res.data,
-});
-
-await client.upload(file, {
-    parallel: 2,
-    retry: 2,
-    onProgress: ({ percent, bytesUploaded, bytesTotal }) => {
-        console.log(`${percent}% — ${bytesUploaded}/${bytesTotal}`);
-    },
-    onError: (err, index) => console.warn(err.code, index),
-});
+```json
+{
+  "success": false,
+  "status": 400,
+  "error": {
+    "code": "PINION_INVALID",
+    "message": "invalid_chunk_request",
+    "details": {}
+  }
+}
 ```
 
-### Features
+**Client flow (browser / mobile):**
 
-- Resume via `fingerprint` + `localStorage`
-- Parallel parts (default `2`)
-- Auto-retry per part (default `2`)
-- `onProgress` with bytes + percent
-- `cancel()` / `AbortSignal`
-- TypeScript types (`types/index.d.ts`)
-- Custom `unwrap` for your API envelope
+1. Build `fingerprint` from `name:size:lastModified:type`.
+2. `POST /init` → get `upload_id` and `missing_indexes`.
+3. For each index: slice file, SHA-256 → `POST /upload`.
+4. Optional parallel uploads (`parallel=2`).
+5. `POST /complete`.
+6. Keep `upload_id` in `localStorage` until done (resume support).
 
-### Composer vendor path (without npm)
+---
 
-```javascript
-import { createPinionClient } from './vendor/pinoox/pinion/client/src/index.js';
+## Configuration
+
+Pass an array to `Pinion::configure()` or copy `config/pinion.php`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `protocol` | `pinion` | Protocol identifier (read-only in responses) |
+| `protocol_version` | `2` | Protocol version |
+| `chunk_size` | `5242880` (5 MB) | Part size in bytes |
+| `min_chunk_size` | `1048576` (1 MB) | Lower clamp |
+| `max_chunk_size` | `10485760` (10 MB) | Upper clamp |
+| `ttl` | `86400` | Session lifetime (seconds) |
+| `max_file_size` | `2147483648` (2 GB) | Max declared file size |
+| `storage_path` | `/tmp/pinion` | Temp workspace for in-progress uploads |
+| `storage_strategy` | `parts` | `parts` or `sparse` |
+| `verify_chunks` | `true` | Require matching `chunk_hash` (SHA-256) |
+| `verify_file_hash` | `false` | Require `file_hash` on complete |
+
+**Laravel / `.env` example:**
+
+```env
+PINION_CHUNK_SIZE=5242880
+PINION_TTL=86400
+PINION_MAX_FILE=2147483648
+PINION_PATH=/var/www/storage/pinion-temp
+PINION_STRATEGY=parts
+PINION_VERIFY_CHUNKS=true
+PINION_VERIFY_FILE=false
 ```
 
-Legacy path: `client/pinion-axios.js` (re-exports main module).
+### Storage strategies
 
-### Publish to npm (summary)
+| Strategy | On disk | Best for |
+|----------|---------|----------|
+| `parts` | `{id}/parts/0.part`, `1.part`, … | Parallel client uploads |
+| `sparse` | Single `{id}/blob.part` with offset writes | Fewer files, sequential writes |
 
-```bash
-cd packages/pinion/client
-npm login
-npm version 1.0.0
-npm publish --access public
+### Custom destinations
+
+Implement `PathResolverInterface` for multi-root apps:
+
+```php
+final class AppPathResolver implements PathResolverInterface
+{
+    public function resolve(string $reference): string
+    {
+        return match ($reference) {
+            'videos' => '/data/media/videos',
+            'documents' => '/data/media/docs',
+            default => '/data/media/' . ltrim($reference, '/'),
+        };
+    }
+}
 ```
 
-Details: [client/README.md § Publish to npm](./client/README.md#publish-to-npm)
+---
+
+## API surface
+
+### PHP
+
+| Class / method | Role |
+|----------------|------|
+| `Pinion::configure($config, $pathResolver?)` | Boot once — config + optional path resolver |
+| `Pinion::manager()` | Low-level `Manager` instance |
+| `Pinion::begin()` | Fluent `Builder` for `init()` |
+| `Pinion::http($defaults)` | Framework-agnostic HTTP adapter (returns arrays) |
+| `Manager::init(...)` | Create or resume session |
+| `Manager::receive(...)` | Store one part |
+| `Manager::complete(...)` | Assemble final file |
+| `Manager::status(...)` | Progress + `missing_indexes` |
+| `Manager::abort(...)` | Cancel session |
+| `Manager::list(...)` | List sessions by status |
+| `Manager::cleanExpired()` | Purge expired pending sessions |
+| `HttpHandler` | Maps HTTP input → Manager → `{ success, data?, error? }` |
+| `Builder` | `filename()`, `size()`, `to()`, `extensions()`, `fingerprint()`, `chunkSize()`, `init()` |
+| `Session` | Read-only upload state + `missingIndexes()`, `progress()` |
+| `Result` | `success`, `session`, `path`, `error`, `resumed` |
+| `PathResolverInterface` | Map logical destination → absolute directory |
+
+**Pinoox extras** (in `pincore`):
+
+| Piece | Role |
+|-------|------|
+| `Pinoox\Portal\Pinion` | Static portal over `Manager` |
+| `Pinoox\Component\Pinion\HttpHandler` | Wraps package handler → `JsonResponse` |
+| CLI | `php pinoox pinion:list`, `pinion:info`, `pinion:clean` |
+
+**Laravel extras** (auto-discovery):
+
+| Piece | Role |
+|-------|------|
+| `PinionServiceProvider` | Registers `Manager` + `HttpHandler` singletons |
+| `Pinion` facade | `Pinion::begin()`, `Pinion::http()` |
+
+### JavaScript
+
+| Export | Role |
+|--------|------|
+| `uploadFile(file, options)` | One-shot upload (fetch) |
+| `pinion(options)` | Fluent client factory |
+| `createPinionFetch(options)` | Explicit fetch client |
+| `createPinionClient(axios, options)` | Full client with Axios |
+| `createPinionAxios(axios, options)` | Axios instance + client |
+| `client.upload(file, opts)` | `init → parts → complete` with parallel + retry |
+| `client.api` | Low-level `init`, `uploadPart`, `complete`, `status`, `abort` |
+| `buildFingerprint(file)` / `shouldUsePinion(file)` | Resume key & threshold helper |
+| `PinionError` | Typed errors with `code` |
+| `sha256Hex(blob)` | Per-part checksum helper |
+
+Details: **[client/README.md](./client/README.md)**
+
+---
+
+## Package structure
+
+```
+packages/pinion/
+├── client/                 # @pinooxhq/pinion-client (npm)
+│   ├── src/
+│   ├── types/
+│   ├── package.json
+│   └── README.md           # npm client guide
+├── config/pinion.php
+├── src/                    # PHP protocol engine (Packagist)
+├── tests/
+└── README.md
+```
 
 ---
 

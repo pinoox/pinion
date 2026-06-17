@@ -1,59 +1,49 @@
 # @pinooxhq/pinion-client
 
-Client for the **[Pinion](https://github.com/pinoox/pinion)** resumable upload protocol.
+Browser client for the **[Pinion](https://github.com/pinoox/pinion)** resumable upload protocol.
 
-Works **with or without Axios** — uses native `fetch` by default; pass Axios when you already use it.
+Works **with or without Axios** — `fetch` by default, Axios when you already use it.
+
+---
+
+## Quick start
 
 ```bash
-# fetch only (zero extra deps)
 npm install @pinooxhq/pinion-client
-
-# or with Axios
-npm install @pinooxhq/pinion-client axios
 ```
 
-**Without Axios (fetch):**
-
 ```javascript
-import { pinion } from '@pinooxhq/pinion-client';
+import { uploadFile } from '@pinooxhq/pinion-client';
 
-const uploader = pinion({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
-
-await uploader.for(file).upload({
-  onProgress: ({ percent, speed, eta }) => console.log(percent, speed, eta),
+await uploadFile(file, {
+  baseURL: '/api/pinion',
+  unwrapPreset: 'pinoox',
+  onProgress: ({ percent }) => console.log(percent + '%'),
 });
 ```
 
-**With Axios:**
-
-```javascript
-import axios from 'axios';
-import { pinion } from '@pinooxhq/pinion-client';
-
-const uploader = pinion(axios, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
-
-await uploader.for(file).upload({
-  onProgress: ({ percent, speed, eta }) => console.log(percent, speed, eta),
-  onUploadProgress: (event, index) => console.log('part', index, event.loaded),
-});
-```
+That is the whole idea: **init → upload parts → complete** — handled for you.
 
 ---
 
 ## Table of contents
 
+- [Quick start](#quick-start)
 - [Features](#features)
 - [Install](#install)
+- [Ways to use](#ways-to-use)
+  - [1 — One function](#1--one-function-fastest)
+  - [2 — Fluent API](#2--fluent-api-reusable)
+  - [3 — Full client](#3--full-client-batch--hooks)
+  - [4 — Low-level steps](#4--low-level-steps-manual)
+  - [5 — With Axios](#5--with-axios-optional)
+  - [6 — Custom transport](#6--custom-transport)
 - [Transport](#transport)
-- [Usage levels](#usage-levels)
-  - [Level 1 — one function](#level-1--one-function)
-  - [Level 2 — fluent API](#level-2--fluent-api)
-  - [Level 3 — full client](#level-3--full-client)
-  - [Level 4 — low-level API](#level-4--low-level-api)
+- [Framework patterns](#framework-patterns)
 - [Advanced](#advanced)
+- [HTTP rules](#http-rules)
 - [API reference](#api-reference)
 - [Publish to npm](#publish-to-npm)
-- [After publishing](#after-publishing)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -63,13 +53,13 @@ await uploader.for(file).upload({
 
 | Feature | Description |
 |---------|-------------|
+| Zero deps | Native `fetch` — no Axios required |
+| Axios optional | Pass Axios for `onUploadProgress` per chunk |
 | Resume | `fingerprint` + `localStorage` session cache |
 | Parallel parts | Upload multiple chunks at once (default `2`) |
 | Retry | Auto-retry failed parts with backoff |
 | Checksums | SHA-256 `chunk_hash` per part |
 | Progress | `percent`, `bytes`, `speed`, `eta` |
-| Axios progress | `onUploadProgress` per chunk (Axios only) |
-| Fetch transport | Zero deps — `fetch` by default |
 | Unwrap presets | `pinoox`, `laravel`, `flat`, `raw` |
 | Batch upload | `uploadMany()` for multiple files |
 | TypeScript | Full `.d.ts` included |
@@ -80,7 +70,7 @@ await uploader.for(file).upload({
 ## Install
 
 ```bash
-# fetch only
+# fetch only (recommended)
 npm install @pinooxhq/pinion-client
 ```
 
@@ -91,47 +81,24 @@ npm install @pinooxhq/pinion-client axios
 
 ```bash
 yarn add @pinooxhq/pinion-client
-# yarn add axios   # optional
 pnpm add @pinooxhq/pinion-client
-# pnpm add axios   # optional
 ```
+
+Requires **Node.js 18+** or a modern browser with `fetch`.
 
 ---
 
-## Transport
+## Ways to use
 
-| Mode | How | Notes |
-|------|-----|-------|
-| **fetch** (default) | `pinion({ baseURL })` or `createPinionFetch()` | No extra dependencies; Node 18+ / modern browsers |
-| **Axios** | `pinion(axios, { baseURL })` or `createPinionClient(axiosInstance, …)` | `onUploadProgress` per chunk |
-| **Custom** | `createPinionClient({ transport: myTransport })` | Implement `get`, `postJson`, `postForm` |
+Pick the style that fits your project — from one-liner to full control.
 
-```javascript
-import { createPinionFetch, uploadFile } from '@pinooxhq/pinion-client';
+### 1 — One function (fastest)
 
-const client = createPinionFetch({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
-await client.upload(file);
-
-// one-liner without Axios
-await uploadFile(file, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
-```
-
-Use `client.transport.kind` (`'fetch'` or `'axios'`) to detect the active transport.
-
----
-
-## Usage levels
-
-Pick the style that fits your project.
-
-### Level 1 — one function
-
-Best for a single upload button.
+Best for a single upload button. No setup object needed.
 
 ```javascript
 import { uploadFile } from '@pinooxhq/pinion-client';
 
-// fetch (no Axios)
 const result = await uploadFile(file, {
   baseURL: '/api/pinion',
   unwrapPreset: 'pinoox',
@@ -140,38 +107,37 @@ const result = await uploadFile(file, {
 });
 ```
 
-With Axios (legacy signature still supported):
+Skip Pinion for small files and fall back to a normal POST:
+
+```javascript
+const skipped = await uploadFile(file, {
+  baseURL: '/api/pinion',
+  auto: true,
+  threshold: 8 * 1024 * 1024,
+});
+
+if (skipped === null) {
+  // file is below threshold — use a regular upload
+}
+```
+
+With Axios (legacy signature):
 
 ```javascript
 import axios from 'axios';
 import { uploadFile } from '@pinooxhq/pinion-client';
 
-const result = await uploadFile(axios, file, {
-  baseURL: '/api/pinion',
-  unwrapPreset: 'pinoox',
-});
+await uploadFile(axios, file, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
 ```
 
-// auto: skip Pinion for small files
-const skipped = await uploadFile(axios, file, {
-  baseURL: '/api/pinion',
-  auto: true,
-  threshold: 8 * 1024 * 1024,
-});
-if (skipped === null) {
-  // use normal single POST upload
-}
-```
+### 2 — Fluent API (reusable)
 
-### Level 2 — fluent API
-
-Readable chain-style API.
+Create one uploader, use it for many files.
 
 ```javascript
-import axios from 'axios';
 import { pinion } from '@pinooxhq/pinion-client';
 
-const uploader = pinion(axios, {
+const uploader = pinion({
   baseURL: '/app/pinion',
   unwrapPreset: 'pinoox',
   headers: { Authorization: 'Bearer …' },
@@ -181,28 +147,23 @@ if (!uploader.for(file).needsPinion()) {
   return fallbackUpload(file);
 }
 
-const result = await uploader
-  .for(file)
-  .upload({ parallel: 2, retry: 2 });
+await uploader.for(file).upload({ parallel: 2, retry: 2 });
 ```
 
-### Level 3 — full client
+### 3 — Full client (batch + hooks)
 
-Full control + batch uploads.
+Maximum control — progress hooks, batch uploads, cancel.
 
 ```javascript
-import axios from 'axios';
-import { createPinionAxios } from '@pinooxhq/pinion-client';
+import { createPinionFetch } from '@pinooxhq/pinion-client';
 
-const { client } = createPinionAxios(axios, {
+const client = createPinionFetch({
   baseURL: '/api/pinion',
   unwrapPreset: 'pinoox',
   destination: 'uploads/media',
   extensions: ['mp4', 'zip', 'pdf'],
-  axiosConfig: { timeout: 120000 },
 });
 
-// single file
 await client.upload(file, {
   onProgress: ({ percent, bytesUploaded, bytesTotal, speed, eta }) => {
     console.log(`${percent}% · ${speed} B/s · ETA ${eta}s`);
@@ -211,26 +172,26 @@ await client.upload(file, {
   onError: (err, i) => console.warn(err.code, i),
 });
 
-// multiple files
 await client.uploadMany([file1, file2], {
   fileParallel: 1,
   onFileStart: (f, i) => console.log('file', i, f.name),
   onFileComplete: (f, result, i) => console.log('done', i),
 });
 
-// cancel
 client.cancel();
 ```
 
-### Level 4 — low-level API
+### 4 — Low-level steps (manual)
 
-Manual step control.
+Call each HTTP step yourself — useful for custom UI or non-file sources.
 
 ```javascript
-import { sha256Hex } from '@pinooxhq/pinion-client';
+import { createPinionFetch, sha256Hex } from '@pinooxhq/pinion-client';
+
+const client = createPinionFetch({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
 
 const session = await client.api.init({
-  filename: 'course-video.mp4',
+  filename: file.name,
   size: file.size,
   fingerprint: client.buildFingerprint(file),
 });
@@ -246,65 +207,90 @@ await client.api.uploadPart(form);
 await client.api.complete(session.id);
 ```
 
----
+### 5 — With Axios (optional)
 
-## Advanced
-
-### Unwrap presets
-
-Map your backend JSON shape without custom code.
+Use Axios when you need per-chunk `onUploadProgress` or already have an Axios instance.
 
 ```javascript
-import { createPinionClient, unwrapPresets } from '@pinooxhq/pinion-client';
+import axios from 'axios';
+import { pinion, createPinionAxios } from '@pinooxhq/pinion-client';
 
-// preset shorthand
-createPinionClient(axios, { unwrapPreset: 'pinoox' });  // res.data.data
-createPinionClient(axios, { unwrapPreset: 'laravel' }); // same envelope
-createPinionClient(axios, { unwrapPreset: 'flat' });    // res.data
-createPinionClient(axios, { unwrapPreset: 'raw' });     // full Axios response
+// shortcut
+const uploader = pinion(axios, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
 
-// custom
-createPinionClient(axios, {
-  unwrap: (res) => res.data.result,
+await uploader.for(file).upload({
+  onProgress: ({ percent }) => console.log(percent),
+  onUploadProgress: (event, index) => console.log('part', index, event.loaded),
 });
 
-// or use preset directly
-unwrapPresets.pinoox(response);
+// or get both axios instance + client
+const { axios: http, client } = createPinionAxios(axios, {
+  baseURL: '/api/pinion',
+  unwrapPreset: 'pinoox',
+  axiosConfig: { timeout: 120000 },
+});
 ```
 
-### Vue 3 composable pattern
+### 6 — Custom transport
+
+Plug in your own HTTP layer by implementing `get`, `postJson`, `postForm`.
+
+```javascript
+import { createPinionClient, createFetchTransport } from '@pinooxhq/pinion-client';
+
+const transport = createFetchTransport({
+  baseURL: '/api/pinion',
+  fetch: myFetch,
+  unwrap: (res) => res.data,
+  headers: { 'X-App': 'portal' },
+});
+
+const client = createPinionClient({ transport });
+```
+
+---
+
+## Transport
+
+| Mode | How | Notes |
+|------|-----|-------|
+| **fetch** (default) | `pinion({ baseURL })` · `createPinionFetch()` · `uploadFile(file, …)` | Zero extra deps |
+| **Axios** | `pinion(axios, …)` · `createPinionClient(axiosInstance, …)` | `onUploadProgress` per chunk |
+| **Custom** | `createPinionClient({ transport })` | Full control |
+
+Check active mode: `client.transport.kind` → `'fetch'` or `'axios'`.
+
+---
+
+## Framework patterns
+
+### Vue 3
 
 ```javascript
 import { ref } from 'vue';
-import axios from 'axios';
 import { pinion } from '@pinooxhq/pinion-client';
 
 const percent = ref(0);
-const eta = ref(null);
-const uploader = pinion(axios, { baseURL: '/app/pinion', unwrapPreset: 'pinoox' });
+const uploader = pinion({ baseURL: '/app/pinion', unwrapPreset: 'pinoox' });
 
 async function onPick(file) {
   percent.value = 0;
   await uploader.for(file).upload({
     parallel: 2,
-    onProgress: (p) => {
-      percent.value = p.percent;
-      eta.value = p.eta;
-    },
+    onProgress: (p) => { percent.value = p.percent; },
   });
 }
 ```
 
-### React hook pattern
+### React
 
 ```javascript
 import { useState, useMemo } from 'react';
-import axios from 'axios';
-import { createPinionAxios } from '@pinooxhq/pinion-client';
+import { createPinionFetch } from '@pinooxhq/pinion-client';
 
 export function usePinion(baseURL = '/api/pinion') {
-  const { client } = useMemo(
-    () => createPinionAxios(axios, { baseURL, unwrapPreset: 'pinoox' }),
+  const client = useMemo(
+    () => createPinionFetch({ baseURL, unwrapPreset: 'pinoox' }),
     [baseURL],
   );
   const [progress, setProgress] = useState(0);
@@ -315,6 +301,34 @@ export function usePinion(baseURL = '/api/pinion') {
 
   return { upload, progress, cancel: () => client.cancel() };
 }
+```
+
+---
+
+## Advanced
+
+### Unwrap presets
+
+Map your backend JSON envelope without custom code.
+
+| Preset | Returns |
+|--------|---------|
+| `pinoox` | `res.data.data` |
+| `laravel` | same envelope |
+| `flat` | `res.data` |
+| `raw` | full response object |
+
+```javascript
+import { createPinionClient, unwrapPresets } from '@pinooxhq/pinion-client';
+
+createPinionClient({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
+
+createPinionClient({
+  baseURL: '/api/pinion',
+  unwrap: (res) => res.data.result,
+});
+
+unwrapPresets.pinoox(response);
 ```
 
 ### Cancel upload
@@ -328,7 +342,9 @@ controller.abort();
 uploader.cancel();
 ```
 
-### Axios / HTTP rules
+---
+
+## HTTP rules
 
 | Step | Content-Type | Body |
 |------|--------------|------|
@@ -339,28 +355,25 @@ uploader.cancel();
 
 ## API reference
 
-### `pinion(options?)` / `pinion(axios, options?)`
+### Factories
 
-Shortcut factory. Without Axios → fetch transport. With Axios static or instance → Axios transport.
+| Function | Description |
+|----------|-------------|
+| `uploadFile(file, options?)` | One-shot upload (fetch) |
+| `uploadFile(axios, file, options?)` | One-shot upload (Axios) |
+| `pinion(options?)` | Fluent client (fetch) |
+| `pinion(axios, options?)` | Fluent client (Axios) |
+| `createPinionFetch(options?)` | Explicit fetch client |
+| `createPinionAxios(axios, options?)` | `{ axios, client }` |
+| `createPinionClient(options?)` | Full client (fetch) |
+| `createPinionClient(axios, options?)` | Full client (Axios) |
 
-### `uploadFile(file, options?)` / `uploadFile(axios, file, options?)`
-
-One-shot upload. Returns `null` when `auto: true` and file is below `threshold`.
-
-### `createPinionFetch(options?)`
-
-Alias for `createPinionClient(options)` — explicit fetch-based client.
-
-### `createPinionAxios(axios, options?)`
-
-Returns `{ axios, client }`. Requires Axios.
-
-### `createPinionClient(options?)` / `createPinionClient(axios, options?)`
+### Client options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `baseURL` | `/api/pinion` | Pinion HTTP root |
-| `fetch` | `globalThis.fetch` | Custom fetch impl (Node polyfill, etc.) |
+| `fetch` | `globalThis.fetch` | Custom fetch (Node polyfill, etc.) |
 | `transport` | auto | Custom `PinionTransport` |
 | `unwrapPreset` | — | `pinoox` \| `laravel` \| `flat` \| `raw` |
 | `unwrap` | auto | Custom response mapper |
@@ -371,16 +384,7 @@ Returns `{ axios, client }`. Requires Axios.
 | `extensions` | — | Allowed file extensions |
 | `threshold` | 8 MB | `shouldUsePinion` limit |
 
-### Transport helpers
-
-| Export | Description |
-|--------|-------------|
-| `createFetchTransport()` | Build fetch transport |
-| `createAxiosTransport()` | Build Axios transport |
-| `isAxiosInstance()` | Detect Axios instance |
-| `isPinionTransport()` | Detect custom transport |
-
-### `client.upload(file, options?)`
+### Upload options
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -407,6 +411,15 @@ Returns `{ axios, client }`. Requires Axios.
 | `client.transport` | Active transport (`kind`: `fetch` \| `axios`) |
 | `client.getStoredSession(fp)` | Read resume cache |
 
+### Transport helpers
+
+| Export | Description |
+|--------|-------------|
+| `createFetchTransport()` | Build fetch transport |
+| `createAxiosTransport()` | Build Axios transport |
+| `isAxiosInstance()` | Detect Axios instance |
+| `isPinionTransport()` | Detect custom transport |
+
 ---
 
 ## Publish to npm
@@ -416,47 +429,25 @@ Returns `{ axios, client }`. Requires Axios.
 | Item | Notes |
 |------|-------|
 | [npmjs.com](https://www.npmjs.com) account | Email verified |
-| `@pinooxhq` org | Required for scoped package (or use unscoped name) |
+| `@pinooxhq` org | Required for scoped package |
 | Node.js 18+ | `node -v` |
 
-### Step 1 — prepare
+### Steps
 
 ```bash
 cd packages/pinion/client
-npm pack
-```
-
-Verify tarball contents before publishing.
-
-### Step 2 — login
-
-```bash
+npm pack                    # verify tarball
 npm login
-npm whoami
-```
-
-### Step 3 — version
-
-```bash
 npm version minor -m "chore: release v%s"
-```
-
-SemVer: `patch` = bugfix · `minor` = feature · `major` = breaking.
-
-### Step 4 — publish
-
-```bash
 npm publish --access public
 ```
 
-Scoped packages always need `--access public` on the free plan.
-
-### Step 5 — verify install
+Verify:
 
 ```bash
 mkdir /tmp/pinion-test && cd /tmp/pinion-test
 npm init -y
-npm install @pinooxhq/pinion-client axios
+npm install @pinooxhq/pinion-client
 ```
 
 ```javascript
@@ -464,9 +455,7 @@ import { pinion, PROTOCOL } from '@pinooxhq/pinion-client';
 console.log(PROTOCOL); // pinion
 ```
 
-### Step 6 — CI (optional)
-
-`.github/workflows/publish-npm.yml`:
+### CI (optional)
 
 ```yaml
 name: Publish npm
@@ -491,38 +480,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-Create **NPM_TOKEN** (Publish) in npm → Access Tokens → GitHub Secrets.
-
-### Monorepo publish
-
-Publish from `client/` folder only. `package.json` already sets:
-
-```json
-"repository": {
-  "directory": "client"
-}
-```
-
----
-
-## After publishing
-
 | Layer | Registry | Package |
 |-------|----------|---------|
 | Server (PHP) | Packagist | `pinoox/pinion` |
 | Browser (JS) | npm | `@pinooxhq/pinion-client` |
-
-```bash
-# Vue / Vite / React
-npm install @pinooxhq/pinion-client axios
-```
-
-```javascript
-import { pinion } from '@pinooxhq/pinion-client';
-import axios from 'axios';
-
-const uploader = pinion(axios, { baseURL: '/app/pinion', unwrapPreset: 'pinoox' });
-```
 
 ---
 
@@ -530,7 +491,8 @@ const uploader = pinion(axios, { baseURL: '/app/pinion', unwrapPreset: 'pinoox' 
 
 | Error | Fix |
 |-------|-----|
-| `402 Payment Required` | Add `--access public` |
+| `PINION_NO_FETCH` | Pass `options.fetch` or use Axios |
+| `402 Payment Required` | Add `--access public` on publish |
 | `403 Forbidden` | Check org membership or token |
 | `403 cannot publish over` | Bump version: `npm version patch` |
 | Multipart fails | Do not set `Content-Type` on `FormData` |
