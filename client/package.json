@@ -1,0 +1,15 @@
+{
+  "name": "@pinoox/pinion-client",
+  "version": "1.0.0",
+  "description": "Axios client for the Pinion resumable upload protocol",
+  "type": "module",
+  "main": "pinion-axios.js",
+  "exports": {
+    ".": "./pinion-axios.js"
+  },
+  "peerDependencies": {
+    "axios": ">=1.0.0"
+  },
+  "keywords": ["pinoox", "pinion", "upload", "axios", "resumable"],
+  "license": "MIT"
+}
