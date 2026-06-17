@@ -1,11 +1,11 @@
 {
   "name": "@pinooxhq/pinion-client",
-  "version": "1.1.0",
-  "description": "Axios client for Pinion — resumable uploads with retry, resume, progress ETA, and unwrap presets",
+  "version": "1.2.0",
+  "description": "Client for Pinion — resumable uploads with fetch or Axios, retry, resume, progress ETA, and unwrap presets",
   "type": "module",
   "license": "MIT",
   "author": "Pinoox <dev@pinoox.com>",
-  "homepage": "https://github.com/pinoox/pinion#readme",
+  "homepage": "https://github.com/pinoox/pinion/tree/master/client#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pinoox/pinion.git",
@@ -19,6 +19,7 @@
     "pinion",
     "upload",
     "axios",
+    "fetch",
     "resumable",
     "chunked-upload",
     "multipart",
@@ -58,7 +59,7 @@
   },
   "peerDependenciesMeta": {
     "axios": {
-      "optional": false
+      "optional": true
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * @param {import('axios').AxiosResponse} response
+ * @param {{ data?: unknown }} response
  */
 export function unwrapPinoox(response) {
     const body = response?.data;
@@ -10,21 +10,21 @@ export function unwrapPinoox(response) {
 }
 
 /**
- * @param {import('axios').AxiosResponse} response
+ * @param {{ data?: unknown }} response
  */
 export function unwrapLaravel(response) {
     return unwrapPinoox(response);
 }
 
 /**
- * @param {import('axios').AxiosResponse} response
+ * @param {{ data?: unknown }} response
  */
 export function unwrapFlat(response) {
     return response?.data ?? null;
 }
 
 /**
- * @param {import('axios').AxiosResponse} response
+ * @param {{ data?: unknown }} response
  */
 export function unwrapRaw(response) {
     return response;

@@ -1,10 +1,30 @@
 # @pinooxhq/pinion-client
 
-Axios client for the **[Pinion](https://github.com/pinoox/pinion)** resumable upload protocol.
+Client for the **[Pinion](https://github.com/pinoox/pinion)** resumable upload protocol.
+
+Works **with or without Axios** — uses native `fetch` by default; pass Axios when you already use it.
 
 ```bash
+# fetch only (zero extra deps)
+npm install @pinooxhq/pinion-client
+
+# or with Axios
 npm install @pinooxhq/pinion-client axios
 ```
+
+**Without Axios (fetch):**
+
+```javascript
+import { pinion } from '@pinooxhq/pinion-client';
+
+const uploader = pinion({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
+
+await uploader.for(file).upload({
+  onProgress: ({ percent, speed, eta }) => console.log(percent, speed, eta),
+});
+```
+
+**With Axios:**
 
 ```javascript
 import axios from 'axios';
@@ -14,6 +34,7 @@ const uploader = pinion(axios, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' 
 
 await uploader.for(file).upload({
   onProgress: ({ percent, speed, eta }) => console.log(percent, speed, eta),
+  onUploadProgress: (event, index) => console.log('part', index, event.loaded),
 });
 ```
 
@@ -23,6 +44,7 @@ await uploader.for(file).upload({
 
 - [Features](#features)
 - [Install](#install)
+- [Transport](#transport)
 - [Usage levels](#usage-levels)
   - [Level 1 — one function](#level-1--one-function)
   - [Level 2 — fluent API](#level-2--fluent-api)
@@ -46,7 +68,8 @@ await uploader.for(file).upload({
 | Retry | Auto-retry failed parts with backoff |
 | Checksums | SHA-256 `chunk_hash` per part |
 | Progress | `percent`, `bytes`, `speed`, `eta` |
-| Axios progress | `onUploadProgress` per chunk |
+| Axios progress | `onUploadProgress` per chunk (Axios only) |
+| Fetch transport | Zero deps — `fetch` by default |
 | Unwrap presets | `pinoox`, `laravel`, `flat`, `raw` |
 | Batch upload | `uploadMany()` for multiple files |
 | TypeScript | Full `.d.ts` included |
@@ -57,13 +80,43 @@ await uploader.for(file).upload({
 ## Install
 
 ```bash
+# fetch only
+npm install @pinooxhq/pinion-client
+```
+
+```bash
+# with Axios (optional peer dependency)
 npm install @pinooxhq/pinion-client axios
 ```
 
 ```bash
-yarn add @pinooxhq/pinion-client axios
-pnpm add @pinooxhq/pinion-client axios
+yarn add @pinooxhq/pinion-client
+# yarn add axios   # optional
+pnpm add @pinooxhq/pinion-client
+# pnpm add axios   # optional
 ```
+
+---
+
+## Transport
+
+| Mode | How | Notes |
+|------|-----|-------|
+| **fetch** (default) | `pinion({ baseURL })` or `createPinionFetch()` | No extra dependencies; Node 18+ / modern browsers |
+| **Axios** | `pinion(axios, { baseURL })` or `createPinionClient(axiosInstance, …)` | `onUploadProgress` per chunk |
+| **Custom** | `createPinionClient({ transport: myTransport })` | Implement `get`, `postJson`, `postForm` |
+
+```javascript
+import { createPinionFetch, uploadFile } from '@pinooxhq/pinion-client';
+
+const client = createPinionFetch({ baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
+await client.upload(file);
+
+// one-liner without Axios
+await uploadFile(file, { baseURL: '/api/pinion', unwrapPreset: 'pinoox' });
+```
+
+Use `client.transport.kind` (`'fetch'` or `'axios'`) to detect the active transport.
 
 ---
 
@@ -76,15 +129,28 @@ Pick the style that fits your project.
 Best for a single upload button.
 
 ```javascript
+import { uploadFile } from '@pinooxhq/pinion-client';
+
+// fetch (no Axios)
+const result = await uploadFile(file, {
+  baseURL: '/api/pinion',
+  unwrapPreset: 'pinoox',
+  parallel: 2,
+  onProgress: ({ percent }) => bar.style.width = percent + '%',
+});
+```
+
+With Axios (legacy signature still supported):
+
+```javascript
 import axios from 'axios';
 import { uploadFile } from '@pinooxhq/pinion-client';
 
 const result = await uploadFile(axios, file, {
   baseURL: '/api/pinion',
   unwrapPreset: 'pinoox',
-  parallel: 2,
-  onProgress: ({ percent }) => bar.style.width = percent + '%',
 });
+```
 
 // auto: skip Pinion for small files
 const skipped = await uploadFile(axios, file, {
@@ -262,7 +328,7 @@ controller.abort();
 uploader.cancel();
 ```
 
-### Axios rules
+### Axios / HTTP rules
 
 | Step | Content-Type | Body |
 |------|--------------|------|
@@ -273,23 +339,29 @@ uploader.cancel();
 
 ## API reference
 
-### `pinion(axios, options?)`
+### `pinion(options?)` / `pinion(axios, options?)`
 
-Shortcut → `createPinionAxios(axios, options).client`
+Shortcut factory. Without Axios → fetch transport. With Axios static or instance → Axios transport.
 
-### `uploadFile(axios, file, options?)`
+### `uploadFile(file, options?)` / `uploadFile(axios, file, options?)`
 
 One-shot upload. Returns `null` when `auto: true` and file is below `threshold`.
 
+### `createPinionFetch(options?)`
+
+Alias for `createPinionClient(options)` — explicit fetch-based client.
+
 ### `createPinionAxios(axios, options?)`
 
-Returns `{ axios, client }`.
+Returns `{ axios, client }`. Requires Axios.
 
-### `createPinionClient(axios, options?)`
+### `createPinionClient(options?)` / `createPinionClient(axios, options?)`
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `baseURL` | `/api/pinion` | Pinion HTTP root |
+| `fetch` | `globalThis.fetch` | Custom fetch impl (Node polyfill, etc.) |
+| `transport` | auto | Custom `PinionTransport` |
 | `unwrapPreset` | — | `pinoox` \| `laravel` \| `flat` \| `raw` |
 | `unwrap` | auto | Custom response mapper |
 | `storageKey` | `pinion_sessions` | Resume cache key |
@@ -298,6 +370,15 @@ Returns `{ axios, client }`.
 | `destination` | — | Default server folder |
 | `extensions` | — | Allowed file extensions |
 | `threshold` | 8 MB | `shouldUsePinion` limit |
+
+### Transport helpers
+
+| Export | Description |
+|--------|-------------|
+| `createFetchTransport()` | Build fetch transport |
+| `createAxiosTransport()` | Build Axios transport |
+| `isAxiosInstance()` | Detect Axios instance |
+| `isPinionTransport()` | Detect custom transport |
 
 ### `client.upload(file, options?)`
 
@@ -311,7 +392,7 @@ Returns `{ axios, client }`.
 | `meta` | `{}` | Custom init metadata |
 | `signal` | — | `AbortSignal` |
 | `onProgress` | — | `{ percent, bytesUploaded, bytesTotal, chunkIndex, speed, eta }` |
-| `onUploadProgress` | — | Raw Axios event per part |
+| `onUploadProgress` | — | Raw Axios event per part (**Axios only**) |
 
 ### Client methods
 
@@ -323,6 +404,7 @@ Returns `{ axios, client }`.
 | `client.uploadMany(files)` | Batch upload |
 | `client.cancel()` | Abort active upload |
 | `client.api.*` | Low-level HTTP steps |
+| `client.transport` | Active transport (`kind`: `fetch` \| `axios`) |
 | `client.getStoredSession(fp)` | Read resume cache |
 
 ---

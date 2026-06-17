@@ -14,6 +14,17 @@ import { createSessionStore } from './storage.js';
 import { defaultUnwrap } from './unwrap.js';
 import { resolveUnwrap } from './unwrapPresets.js';
 import { emitProgress, resetProgressTracker } from './progress.js';
+import {
+    createAxiosTransport,
+    createFetchTransport,
+    isAxiosInstance,
+    isPinionTransport,
+} from './transport.js';
+
+/**
+ * @typedef {import('./transport.js').PinionRequestConfig} PinionRequestConfig
+ * @typedef {import('./transport.js').PinionTransport} PinionTransport
+ */
 
 /**
  * @typedef {object} PinionProgress
@@ -31,7 +42,7 @@ import { emitProgress, resetProgressTracker } from './progress.js';
  * @property {(index: number) => void} [onChunkStart]
  * @property {(index: number) => void} [onChunkComplete]
  * @property {(error: PinionError, index: number|null) => void} [onError]
- * @property {(event: import('axios').AxiosProgressEvent, index: number) => void} [onUploadProgress]
+ * @property {(event: { loaded?: number; total?: number; progress?: number }, index: number) => void} [onUploadProgress]
  * @property {number} [chunkSize]
  * @property {number} [parallel]
  * @property {AbortSignal} [signal]
@@ -48,23 +59,53 @@ import { emitProgress, resetProgressTracker } from './progress.js';
  * @typedef {object} PinionClientOptions
  * @property {string} [baseURL]
  * @property {string} [storageKey]
- * @property {(response: import('axios').AxiosResponse) => unknown} [unwrap]
+ * @property {(response: { data?: unknown }) => unknown} [unwrap]
  * @property {'pinoox'|'laravel'|'flat'|'raw'|'default'} [unwrapPreset]
  * @property {import('./storage.js').PinionStorageAdapter} [storage]
  * @property {Record<string, string>} [headers]
  * @property {string} [destination]
  * @property {string[]|string} [extensions]
  * @property {number} [threshold] default shouldUsePinion threshold
+ * @property {PinionTransport} [transport] custom HTTP transport
+ * @property {typeof fetch} [fetch] fetch implementation (default: globalThis.fetch)
  */
 
 /**
- * @param {import('axios').AxiosInstance} axios
- * @param {PinionClientOptions} [options]
+ * @param {import('axios').AxiosInstance | PinionClientOptions} [arg1]
+ * @param {PinionClientOptions} [arg2]
  */
-export function createPinionClient(axios, options = {}) {
+export function createPinionClient(arg1, arg2) {
+    let options = {};
+    let transport;
+
+    if (isAxiosInstance(arg1)) {
+        options = arg2 ?? {};
+        const baseURL = (options.baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
+        const unwrap = options.unwrap
+            ?? (options.unwrapPreset ? resolveUnwrap(options.unwrapPreset) : defaultUnwrap);
+        transport = createAxiosTransport(arg1, baseURL, {
+            unwrap,
+            headers: options.headers,
+        });
+    } else {
+        options = arg1 ?? {};
+        const baseURL = (options.baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
+        const unwrap = options.unwrap
+            ?? (options.unwrapPreset ? resolveUnwrap(options.unwrapPreset) : defaultUnwrap);
+
+        if (isPinionTransport(options.transport)) {
+            transport = options.transport;
+        } else {
+            transport = createFetchTransport({
+                baseURL,
+                fetch: options.fetch,
+                unwrap,
+                headers: options.headers,
+            });
+        }
+    }
+
     const baseURL = (options.baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, '');
-    const unwrap = options.unwrap
-        ?? (options.unwrapPreset ? resolveUnwrap(options.unwrapPreset) : defaultUnwrap);
     const sessionStore = createSessionStore(options.storage ?? null, options.storageKey ?? DEFAULT_STORAGE_KEY);
     const defaultHeaders = options.headers ?? {};
     const defaultDestination = options.destination;
@@ -74,11 +115,11 @@ export function createPinionClient(axios, options = {}) {
     let activeController = null;
 
     const api = {
-        init: (payload, config) => postJson('/init', payload, config),
-        uploadPart: (formData, config) => postMultipart('/upload', formData, config),
-        complete: (uploadId, payload = {}, config) => postJson('/complete', { upload_id: uploadId, ...payload }, config),
-        status: (uploadId, config) => axios.get(`${baseURL}/status/${uploadId}`, mergeConfig(config)).then(unwrap),
-        abort: (uploadId, config) => postJson(`/abort/${uploadId}`, {}, config),
+        init: (payload, config) => transport.postJson('/init', payload, config),
+        uploadPart: (formData, config) => transport.postForm('/upload', formData, config),
+        complete: (uploadId, payload = {}, config) => transport.postJson('/complete', { upload_id: uploadId, ...payload }, config),
+        status: (uploadId, config) => transport.get(`/status/${uploadId}`, config),
+        abort: (uploadId, config) => transport.postJson(`/abort/${uploadId}`, {}, config),
     };
 
     const client = {
@@ -92,6 +133,7 @@ export function createPinionClient(axios, options = {}) {
         getStoredSession,
         api,
         getActiveSignal: () => activeController?.signal ?? null,
+        transport,
         options: { baseURL, threshold: defaultThreshold },
     };
 
@@ -135,7 +177,7 @@ export function createPinionClient(axios, options = {}) {
             signal.addEventListener('abort', () => activeController?.abort(), { once: true });
         }
 
-        const axiosConfig = mergeConfig({ signal: activeController.signal }, opts.headers);
+        const requestConfig = mergeRequestConfig({ signal: activeController.signal }, opts.headers);
 
         try {
             resetProgressTracker();
@@ -153,7 +195,7 @@ export function createPinionClient(axios, options = {}) {
             };
 
             const initData = await withRetry(
-                () => api.init(stripUndefined(initPayload), axiosConfig),
+                () => api.init(stripUndefined(initPayload), requestConfig),
                 retry,
                 retryDelayMs,
                 opts.onError,
@@ -187,7 +229,7 @@ export function createPinionClient(axios, options = {}) {
                     opts.onChunkStart?.(index);
 
                     await withRetry(
-                        () => uploadChunk(file, session, index, size, axiosConfig, opts),
+                        () => uploadChunk(file, session, index, size, requestConfig, opts),
                         retry,
                         retryDelayMs,
                         opts.onError,
@@ -205,7 +247,7 @@ export function createPinionClient(axios, options = {}) {
             await Promise.all(workers);
 
             const result = await withRetry(
-                () => api.complete(session.id, stripUndefined({ file_hash: opts.fileHash }), axiosConfig),
+                () => api.complete(session.id, stripUndefined({ file_hash: opts.fileHash }), requestConfig),
                 retry,
                 retryDelayMs,
                 opts.onError,
@@ -275,10 +317,10 @@ export function createPinionClient(axios, options = {}) {
      * @param {object} session
      * @param {number} index
      * @param {number} size
-     * @param {import('axios').AxiosRequestConfig} axiosConfig
+     * @param {PinionRequestConfig} requestConfig
      * @param {PinionUploadOptions} opts
      */
-    async function uploadChunk(file, session, index, size, axiosConfig, opts) {
+    async function uploadChunk(file, session, index, size, requestConfig, opts) {
         const start = index * size;
         const end = Math.min(start + size, file.size);
         const blob = file.slice(start, end);
@@ -288,43 +330,20 @@ export function createPinionClient(axios, options = {}) {
         formData.append('chunk_hash', await sha256Hex(blob));
         formData.append('chunk', blob, `${file.name}.part`);
 
-        await postMultipart('/upload', formData, {
-            ...axiosConfig,
-            onUploadProgress: (event) => opts.onUploadProgress?.(event, index),
-        });
+        const uploadConfig = { ...requestConfig };
+
+        if (transport.kind === 'axios' && opts.onUploadProgress) {
+            uploadConfig.onUploadProgress = (event) => opts.onUploadProgress?.(event, index);
+        }
+
+        await transport.postForm('/upload', formData, uploadConfig);
     }
 
     /**
-     * @param {string} path
-     * @param {Record<string, unknown>} data
-     * @param {import('axios').AxiosRequestConfig} [config]
-     */
-    async function postJson(path, data, config = {}) {
-        const response = await axios.post(`${baseURL}${path}`, data, mergeConfig({
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-            },
-        }, config));
-
-        return unwrap(response);
-    }
-
-    /**
-     * @param {string} path
-     * @param {FormData} formData
-     * @param {import('axios').AxiosRequestConfig} [config]
-     */
-    async function postMultipart(path, formData, config = {}) {
-        const response = await axios.post(`${baseURL}${path}`, formData, mergeConfig({}, config));
-        return unwrap(response);
-    }
-
-    /**
-     * @param {import('axios').AxiosRequestConfig} [config]
+     * @param {PinionRequestConfig} [config]
      * @param {Record<string, string>} [extraHeaders]
      */
-    function mergeConfig(config = {}, extraHeaders = {}) {
+    function mergeRequestConfig(config = {}, extraHeaders = {}) {
         return {
             ...config,
             headers: {

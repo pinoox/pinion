@@ -1,7 +1,7 @@
 /**
  * Supports Laravel, Pinoox ApiResponse, or flat JSON bodies.
  *
- * @param {import('axios').AxiosResponse} response
+ * @param {{ data?: unknown }} response
  * @returns {unknown}
  */
 export function defaultUnwrap(response) {

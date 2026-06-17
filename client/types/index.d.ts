@@ -10,6 +10,24 @@ export declare const DEFAULT_CHUNK_SIZE: number;
 export declare const DEFAULT_RETRY: number;
 export declare const DEFAULT_RETRY_DELAY_MS: number;
 
+export interface PinionHttpResponse {
+    data?: unknown;
+    status?: number;
+}
+
+export interface PinionRequestConfig {
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+    onUploadProgress?: (event: AxiosProgressEvent | { loaded?: number; total?: number; progress?: number }) => void;
+}
+
+export interface PinionTransport {
+    kind: 'axios' | 'fetch';
+    get(path: string, config?: PinionRequestConfig): Promise<unknown>;
+    postJson(path: string, data: Record<string, unknown>, config?: PinionRequestConfig): Promise<unknown>;
+    postForm(path: string, formData: FormData, config?: PinionRequestConfig): Promise<unknown>;
+}
+
 export interface PinionProgress {
     percent: number;
     bytesUploaded: number;
@@ -30,7 +48,7 @@ export interface PinionUploadOptions {
     onChunkStart?: (index: number) => void;
     onChunkComplete?: (index: number) => void;
     onError?: (error: PinionError, index: number | null) => void;
-    onUploadProgress?: (event: AxiosProgressEvent, index: number) => void;
+    onUploadProgress?: (event: AxiosProgressEvent | { loaded?: number; total?: number; progress?: number }, index: number) => void;
     chunkSize?: number;
     parallel?: number;
     signal?: AbortSignal;
@@ -51,13 +69,15 @@ export interface PinionUploadOptions {
 export interface PinionClientOptions {
     baseURL?: string;
     storageKey?: string;
-    unwrap?: (response: AxiosResponse) => unknown;
+    unwrap?: (response: PinionHttpResponse | AxiosResponse) => unknown;
     unwrapPreset?: 'pinoox' | 'laravel' | 'flat' | 'raw' | 'default';
     storage?: PinionStorageAdapter;
     headers?: Record<string, string>;
     destination?: string;
     extensions?: string[] | string;
     threshold?: number;
+    transport?: PinionTransport;
+    fetch?: typeof fetch;
 }
 
 export declare class PinionError extends Error {
@@ -70,13 +90,13 @@ export declare function toPinionError(error: unknown, fallbackCode?: string): Pi
 export declare function sha256Hex(blob: Blob): Promise<string>;
 export declare function buildFingerprint(file: File): string;
 export declare function shouldUsePinion(file: File, threshold?: number): boolean;
-export declare function defaultUnwrap(response: AxiosResponse): unknown;
-export declare function unwrapPinoox(response: AxiosResponse): unknown;
-export declare function unwrapLaravel(response: AxiosResponse): unknown;
-export declare function unwrapFlat(response: AxiosResponse): unknown;
-export declare function unwrapRaw(response: AxiosResponse): unknown;
-export declare const unwrapPresets: Record<string, (response: AxiosResponse) => unknown>;
-export declare function resolveUnwrap(name: string): (response: AxiosResponse) => unknown;
+export declare function defaultUnwrap(response: PinionHttpResponse | AxiosResponse): unknown;
+export declare function unwrapPinoox(response: PinionHttpResponse | AxiosResponse): unknown;
+export declare function unwrapLaravel(response: PinionHttpResponse | AxiosResponse): unknown;
+export declare function unwrapFlat(response: PinionHttpResponse | AxiosResponse): unknown;
+export declare function unwrapRaw(response: PinionHttpResponse | AxiosResponse): unknown;
+export declare const unwrapPresets: Record<string, (response: PinionHttpResponse | AxiosResponse) => unknown>;
+export declare function resolveUnwrap(name: string): (response: PinionHttpResponse | AxiosResponse) => unknown;
 export declare function createLocalStorageAdapter(): PinionStorageAdapter | null;
 export declare function createMemoryStorageAdapter(): PinionStorageAdapter;
 export declare function createSessionStore(adapter: PinionStorageAdapter | null, storageKey: string): {
@@ -86,12 +106,27 @@ export declare function createSessionStore(adapter: PinionStorageAdapter | null,
     clear(fingerprint: string): void;
 };
 
+export declare function isAxiosInstance(value: unknown): value is AxiosInstance;
+export declare function isAxiosStatic(value: unknown): boolean;
+export declare function isPinionTransport(value: unknown): value is PinionTransport;
+export declare function createAxiosTransport(
+    axios: AxiosInstance,
+    baseURL: string,
+    options: { unwrap: (response: PinionHttpResponse | AxiosResponse) => unknown; headers?: Record<string, string> },
+): PinionTransport;
+export declare function createFetchTransport(options: {
+    baseURL: string;
+    fetch?: typeof fetch;
+    unwrap: (response: PinionHttpResponse) => unknown;
+    headers?: Record<string, string>;
+}): PinionTransport;
+
 export interface PinionApi {
-    init(payload: Record<string, unknown>, config?: AxiosRequestConfig): Promise<unknown>;
-    uploadPart(formData: FormData, config?: AxiosRequestConfig): Promise<unknown>;
-    complete(uploadId: string, payload?: Record<string, unknown>, config?: AxiosRequestConfig): Promise<unknown>;
-    status(uploadId: string, config?: AxiosRequestConfig): Promise<unknown>;
-    abort(uploadId: string, config?: AxiosRequestConfig): Promise<unknown>;
+    init(payload: Record<string, unknown>, config?: PinionRequestConfig): Promise<unknown>;
+    uploadPart(formData: FormData, config?: PinionRequestConfig): Promise<unknown>;
+    complete(uploadId: string, payload?: Record<string, unknown>, config?: PinionRequestConfig): Promise<unknown>;
+    status(uploadId: string, config?: PinionRequestConfig): Promise<unknown>;
+    abort(uploadId: string, config?: PinionRequestConfig): Promise<unknown>;
 }
 
 export interface PinionFileHandle {
@@ -113,10 +148,14 @@ export interface PinionClient {
     getStoredSession(fingerprint: string): unknown;
     api: PinionApi;
     getActiveSignal(): AbortSignal | null;
+    transport: PinionTransport;
     options: { baseURL: string; threshold: number };
 }
 
 export declare function createPinionClient(axios: AxiosInstance, options?: PinionClientOptions): PinionClient;
+export declare function createPinionClient(options?: PinionClientOptions): PinionClient;
+
+export declare function createPinionFetch(options?: PinionClientOptions): PinionClient;
 
 export declare function createPinionAxios(
     axios: { create(config?: AxiosRequestConfig): AxiosInstance },
@@ -124,12 +163,18 @@ export declare function createPinionAxios(
 ): { axios: AxiosInstance; client: PinionClient };
 
 export declare function uploadFile(
+    file: File,
+    options?: PinionClientOptions & PinionUploadOptions,
+): Promise<unknown | null>;
+export declare function uploadFile(
     axios: AxiosInstance,
     file: File,
     options?: PinionClientOptions & PinionUploadOptions,
 ): Promise<unknown | null>;
 
+export declare function pinion(options?: PinionClientOptions): PinionClient;
 export declare function pinion(
     axios: { create(config?: AxiosRequestConfig): AxiosInstance },
     options?: PinionClientOptions & { axiosConfig?: AxiosRequestConfig },
 ): PinionClient;
+export declare function pinion(axios: AxiosInstance, options?: PinionClientOptions): PinionClient;
