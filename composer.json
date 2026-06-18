@@ -1,6 +1,6 @@
 {
   "name": "pinoox/pinion",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Pinion — resumable chunked upload protocol for PHP (Pinoox, Laravel, any framework)",
   "type": "library",
   "license": "MIT",

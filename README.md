@@ -2,12 +2,14 @@
 
 **Pinion** (`pinoox/pinion`) lets users upload large files in small parts — even when PHP `upload_max_filesize` / `post_max_size` are low.
 
-Protocol id: `pinion` · version: `2` · PHP 8.1+
+Protocol id: `pinion` · protocol version: `2` · PHP 8.1+
 
-| Registry | Package |
-|----------|---------|
-| Packagist (server) | `pinoox/pinion` |
-| npm (browser) | `@pinooxhq/pinion-client` |
+| Layer | Registry | Package | Release |
+|-------|----------|---------|---------|
+| Server (PHP) | [Packagist](https://packagist.org/packages/pinoox/pinion) | `pinoox/pinion` | **1.1.0** |
+| Browser (JS) | [npm](https://www.npmjs.com/package/@pinooxhq/pinion-client) | `@pinooxhq/pinion-client` | **1.2.0** |
+
+> **Protocol version** (`2`) is the wire format (`protocol_version` in API responses). **Release** columns are separate semver for the PHP and npm packages.
 
 ---
 
@@ -16,8 +18,8 @@ Protocol id: `pinion` · version: `2` · PHP 8.1+
 ### 1 — Install
 
 ```bash
-composer require pinoox/pinion          # PHP server
-npm install @pinooxhq/pinion-client       # browser (fetch, no Axios required)
+composer require pinoox/pinion          # PHP server (current: 1.0.2)
+npm install @pinooxhq/pinion-client       # browser (current: 1.2.0, fetch — no Axios required)
 ```
 
 ### 2 — Server: three HTTP steps
@@ -161,6 +163,8 @@ sequenceDiagram
 
 ### PHP — Packagist
 
+Current release: **1.1.0** ([`pinoox/pinion`](https://packagist.org/packages/pinoox/pinion))
+
 ```bash
 composer require pinoox/pinion
 ```
@@ -175,6 +179,8 @@ composer require pinoox/pinion
 ```
 
 ### JavaScript — npm
+
+Current release: **1.2.0** ([`@pinooxhq/pinion-client`](https://www.npmjs.com/package/@pinooxhq/pinion-client))
 
 ```bash
 npm install @pinooxhq/pinion-client
@@ -460,46 +466,84 @@ $complete = Pinion::manager()->complete($uploadId);
 // $complete->path → absolute path on disk
 ```
 
-### Pinoox
+### Pinoox (HMVC)
 
-Inside a Pinoox project use the **Portal** — config and storage are already wired.
+Inside a Pinoox project use **`Pinoox\Portal\Pinion`** — config, temp storage, Flysystem/S3, and `pinx_file` integration are wired in `pincore`.
+
+| Piece | Path | Role |
+|-------|------|------|
+| Portal | `Pinoox\Portal\Pinion` | App-facing API |
+| Bridge | `pincore/Component/Pinion/` | `ProtocolManager`, `StorageCompletion`, `HttpHandler` |
+| Config | `pincore/config/pinion.config.php` | Chunk TTL, `PINION_MODE`, storage defaults |
+| Trait | `PinionUploadActions` | Drop-in controller actions per app |
+| CLI | `php pinoox pinion:list` | Ops on temp sessions |
+
+**Storage modes** (`pinion.config.php` → `defaults.mode`):
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` | Use Flysystem (`Portal\File`) when app `filesystem.disk` is not `local` (e.g. **S3**) |
+| `storage` | Always publish through managed file storage + optional `FileModel` row |
+| `local` | Assemble to project path via `path()` (legacy / manual folders) |
+
+Chunks always stage under `storage/pinion`. On `complete`, managed mode streams the assembled file to the app disk (local or S3) via `UploadBuilder`.
+
+**App controller (HMVC)** — use the trait:
 
 ```php
-use Pinoox\Portal\Pinion;
-use Pinoox\Component\Http\Request;
+use Pinoox\Component\Kernel\Controller\ApiController;
+use Pinoox\Component\Pinion\Concerns\PinionUploadActions;
 
-// programmatic
-$result = Pinion::begin()
-    ->filename('backup-2026.zip')
-    ->size(524288000)
-    ->to('downloads/archives')
-    ->extensions(['zip', 'tar', 'gz'])
-    ->fingerprint($clientFingerprint)
-    ->init();
-```
-
-Controller (JSON API):
-
-```php
 class PinionController extends ApiController
 {
-    private function handler()
+    use PinionUploadActions;
+
+    protected function pinionDefaults(): array
     {
-        return Pinion::http([
+        return [
             'destination' => 'uploads/media',
             'extensions' => ['mp4', 'mov', 'webm'],
-        ]);
+            'mode' => 'auto',       // S3 when app disk is s3
+            'record' => true,       // create pinx_file row
+            'access' => 'public',
+            'group' => 'media',
+        ];
     }
-
-    public function init(Request $request)     { return $this->handler()->init($request); }
-    public function upload(Request $request)   { return $this->handler()->upload($request); }
-    public function complete(Request $request) { return $this->handler()->complete($request); }
-    public function status(string $uploadId)   { return $this->handler()->status($uploadId); }
-    public function abort(string $uploadId)    { return $this->handler()->abort($uploadId); }
 }
 ```
 
-Default manager routes:
+**Local-only upload** (no Flysystem — e.g. manager `.pinx` packages):
+
+```php
+protected function pinionDefaults(): array
+{
+    return [
+        'destination' => 'downloads/packages/manual',
+        'extensions' => ['pinx'],
+        'mode' => 'local',
+        'storage' => false,
+        'record' => false,
+    ];
+}
+```
+
+**Browser client** — npm [`@pinooxhq/pinion-client`](https://www.npmjs.com/package/@pinooxhq/pinion-client):
+
+```javascript
+import { uploadFile } from '@pinooxhq/pinion-client';
+
+await uploadFile(file, {
+  baseURL: '/app/pinion',
+  unwrapPreset: 'pinoox',
+  destination: 'uploads/media',
+  meta: { group: 'media' },
+  onProgress: ({ percent }) => console.log(percent),
+});
+```
+
+On `complete` with managed storage, the API returns `file_id`, `url`, and `thumb` (when applicable).
+
+**Routes** (per app under `apps/{package}/routes/`):
 
 ```
 POST /app/pinion/init
@@ -509,9 +553,11 @@ GET  /app/pinion/status/{uploadId}
 POST /app/pinion/abort/{uploadId}
 ```
 
-→ client: `baseURL: '/app/pinion'`
+→ client `baseURL: '/app/pinion'`
 
-Config: `pincore/config/pinion.config.php` · temp storage: `storage/pinion`
+Template: `pincore/config/pinion.routes.template.php`
+
+Config: `pincore/config/pinion.config.php` · temp: `storage/pinion` (`pinion_uploads`)
 
 CLI:
 
@@ -520,8 +566,6 @@ php pinoox pinion:list
 php pinoox pinion:info {upload_id}
 php pinoox pinion:clean --abort={upload_id}
 ```
-
-Extended guide: [docs/en/advanced/pinion.md](../docs/en/advanced/pinion.md)
 
 ### Laravel
 
@@ -889,7 +933,7 @@ Common codes: `PINION_INIT_FAILED`, `PINION_INVALID`, `PINION_CHUNK_HASH_MISMATC
 
 ## Browser client (full reference)
 
-Published as **`@pinooxhq/pinion-client`**. Detailed npm guide: **[client/README.md](./client/README.md)**
+Published as **`@pinooxhq/pinion-client` 1.2.0**. Detailed npm guide: **[client/README.md](./client/README.md)**
 
 ### Usage levels
 
@@ -985,7 +1029,8 @@ Set `unwrapPreset: 'pinoox'` when your PHP API wraps data in `{ data: … }`.
 
 ```
 packages/pinion/
-├── client/                 # @pinooxhq/pinion-client (npm)
+├── composer.json           # pinoox/pinion 1.1.0 (Packagist)
+├── client/                 # @pinooxhq/pinion-client 1.2.0 (npm)
 │   ├── src/                # createClient, transport, checksum, …
 │   ├── types/              # TypeScript definitions
 │   ├── package.json

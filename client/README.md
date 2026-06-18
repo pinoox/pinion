@@ -1,5 +1,7 @@
 # @pinooxhq/pinion-client
 
+**Release:** 1.2.0 · **Protocol:** `pinion` v2
+
 Browser client for the **[Pinion](https://github.com/pinoox/pinion)** resumable upload protocol.
 
 Works **with or without Axios** — `fetch` by default, Axios when you already use it.
@@ -480,10 +482,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-| Layer | Registry | Package |
-|-------|----------|---------|
-| Server (PHP) | Packagist | `pinoox/pinion` |
-| Browser (JS) | npm | `@pinooxhq/pinion-client` |
+| Layer | Registry | Package | Release |
+|-------|----------|---------|---------|
+| Server (PHP) | Packagist | `pinoox/pinion` | **1.1.0** |
+| Browser (JS) | npm | `@pinooxhq/pinion-client` | **1.2.0** |
 
 ---
 
