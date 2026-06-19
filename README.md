@@ -2,7 +2,7 @@
 
 **Pinion** (`pinoox/pinion`) lets users upload large files in small parts — even when PHP `upload_max_filesize` / `post_max_size` are low.
 
-Protocol id: `pinion` · protocol version: `2` · PHP 8.1+
+Protocol id: `pinion` · protocol version: `2` · PHP 8.2+
 
 | Layer | Registry | Package | Release |
 |-------|----------|---------|---------|
